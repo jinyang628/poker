@@ -1,0 +1,2420 @@
+#Main goal: Allow users to customise CPU behavior. Code Conservative, Aggressive, Random.
+#Key idea is that the conservative player will be more likely to act in a certain way, but his behavior is also not binding/known for certain
+#Character identities (Jessica all ins when she has below 10 dollars, Jake always follows after committing at the river, Ben tends to intiate high starting bets, Jennifer's behavior varies more violently as the game gets longer.
+#Character lines when they lose/win a round (pick from a pool of options)
+
+#KIV - HOW to code in FOLD
+#KIV - HOW to code in REJECT-ALL in amount
+
+import time
+import random
+import math
+import itertools
+from collections import deque
+from statistics import mode
+
+global exit_game
+exit_game = False
+
+global round_end
+round_end = False
+
+def set_up():
+    global round
+    round = 0
+
+    #introduction
+    print("A very warm welcome to Jin Yang's Poker Club!")
+    time.sleep(1.5)
+
+    global player_name
+    player_name = input("Please enter your name: ")
+    player_name = "(" + player_name + ")"
+    time.sleep(1)
+    print("Oh! It's you again. Lenny, stop drolling on the counter and get our favorite " + player_name +" a beer!")
+    time.sleep(3)
+
+    global player_count
+    player_count = input("Please indicate the number of CPU players you wish to play with today (1-10): ")
+    time.sleep(0.5)
+    if player_count == "ALL IN" or int(player_count) not in range(1,11):
+        print(player_name + ", you had one job. And that is to enter a number between 1 to 10. Since we can't trust you to perform such a simple task, you will play with 5 CPU players and that is non-negotiable!!!")
+        time.sleep(5)
+        player_count = 5
+    print("If you still remember, there are 10 CPU players with unique personalities and emotional triggers to choose from.")
+    time.sleep(3)
+    print("Choose " + str(player_count) + " of the player(s) listed below by entering their names.")
+    time.sleep(2.5)
+    print(2*"\n")
+    print("Player 1: Alfred\nAlfred is an average reasonable guy who plays the game in an average reasonable manner. You can expect Alfred to be unreasonably reasonable.")
+    print("Player 2: Benjamin\nBenjamin is afraid of losing too much in a single round. You can expect Benjamin to be more cautious as the pot grows bigger.")
+    print("Player 3: Cedric\nCedric thinks that a good poker player must make use of the lack of information during the Pre-flop phase. You can expect Cedric to be aggressive early to bluff his opponents or capitalise on strong hole cards.")
+    print("Player 4: Damon\nDamon believes that a round is never truly lost until the final showdown. You can expect Damon to follow through with most of his hands.")
+    print("Player 5: Ella\nElla gets frustrated easily and tends to make bigger bets after she loses to win back her life savings. You can expect Ella to be more aggressive when she has lost the previous round.")
+    print("Player 6: Fanny\nFanny suffers from a crippling FOMO. You can expect Fanny to enter the pot when most of the other players do so as well.")
+    print("Player 7: Gerald\nGerald has a limited attention span. You can expect Gerald to make bigger bets to end the game faster as the rounds progress.")
+    print("Player 8: Harry\nHarry loves to conceal a good hand. You can expect Harry to play cautiously early, but raise the stakes significantly at the turn or the river.")
+    print("Player 9: Isabelle\nIsabelle likes to go big or go home. You can expect Isabelle to either fold early or make huge bets with her hand.")
+    print("Player 10: Jane\nJane is rolling in money so she starts with more cash. Deal with it.")
+    print(2*"\n")
+
+    #CPU section
+    global list_CPU_pool
+    list_CPU_pool = ["Alfred", "Benjamin", "Cedric", "Damon", "Ella", "Fanny", "Gerald", "Harry", "Isabelle", "Jane"]
+
+    global list_CPU_chosen
+    list_CPU_chosen = []
+
+    global starting_cash_tabs
+    starting_cash_tabs = {}
+    starting_cash_tabs[player_name] = 100
+
+    global running_sunk_cost
+    running_sunk_cost = {}
+    running_sunk_cost[player_name] = 0
+
+    global running_total_sunk_cost
+    running_total_sunk_cost = {}
+    running_total_sunk_cost[player_name] = 0
+
+    i = 1
+    while i < (int(player_count) + 1):
+        chosen_CPU = input("Enter name of CPU " + str(i) +": ")
+        chosen = chosen_CPU.capitalize()
+        if chosen in list_CPU_pool:
+            list_CPU_chosen.append(chosen)
+            list_CPU_pool.remove(chosen)
+            starting_cash_tabs[chosen] = 100
+            running_sunk_cost[chosen] = 0
+            running_total_sunk_cost[chosen] = 0
+            if chosen == "Jane":
+                starting_cash_tabs[chosen] = 120
+            i += 1
+        else:
+            print("Oh dear, I don't think this player is in today! (Check if you have spelt the name of the CPU correctly/Check if you have already picked the CPU)")
+    list_CPU_chosen.append(player_name)
+
+    total_money = 0
+    for player in list_CPU_chosen:
+        total_money += starting_cash_tabs[player]
+        
+    global average_money
+    average_money = total_money // len(list_CPU_chosen)
+
+    print("Ladies and jellybeans...Boys and gorillas, please put your hands together to welcome ")
+    time.sleep(0.5)
+    for i in list_CPU_chosen:
+        print(i)
+        time.sleep(0.5)
+
+    global Ella_condition
+    if "Ella" in list_CPU_chosen:
+        Ella_condition = False
+
+    global Fanny_condition
+    if "Fanny" in list_CPU_chosen:
+        Fanny_condition = False
+
+    global Harry_counter
+    Harry_counter = 0
+
+    #Game starts (Amend this to have a funny Jane interaction when she is chosen)
+    print("Everyone will start the game with 100 USD.")
+    time.sleep(1.5)
+    if "Jane" in list_CPU_chosen:
+        print("Alright nevermind, Jane just received 20 USD more. Don't ask us why.")
+        time.sleep(2)
+    print("Big blinds will be 2 USD and small blinds will be 1 USD. May fortune always be in your favor.")
+    time.sleep(4)
+
+    #randomise player seating arrangement
+
+    random.shuffle(list_CPU_chosen)
+
+########################     Main Game Engine (Commands above MUST ONLY RUN ONCE. Commands below must loop.   ###############################
+def game():
+    global contribution_list
+    contribution_list = []
+
+    global fold_list
+    fold_list = []
+
+    global all_lucky_guys
+    all_lucky_guys = []
+
+    global post_flop
+    post_flop = False
+
+    global pot
+    pot = 0
+
+    global split_pot
+    split_pot = False
+
+    global jump_to_showdown
+    jump_to_showdown = False
+
+    global round
+    round += 1
+    print("~card dealing noises~")
+    time.sleep(1)
+
+    global compiled_side_pot_name_list
+    global compiled_side_pot_amount
+
+    compiled_side_pot_name_list = []
+    compiled_side_pot_amount = []
+
+    #Cards
+    global deck_List
+    deck_List = ["Diamonds 2", "Diamonds 3", "Diamonds 4", "Diamonds 5", "Diamonds 6", "Diamonds 7", "Diamonds 8",
+                 "Diamonds 9", "Diamonds 10", "Diamonds J", "Diamonds Q", "Diamonds K", "Diamonds A",
+                 "Clubs 2", "Clubs 3", "Clubs 4", "Clubs 5", "Clubs 6", "Clubs 7", "Clubs 8", "Clubs 9", "Clubs 10",
+                 "Clubs J", "Clubs Q", "Clubs K", "Clubs A",
+                 "Hearts 2", "Hearts 3", "Hearts 4", "Hearts 5", "Hearts 6", "Hearts 7", "Hearts 8", "Hearts 9",
+                 "Hearts 10", "Hearts J", "Hearts Q", "Hearts K", "Hearts A",
+                 "Spades 2", "Spades 3", "Spades 4", "Spades 5", "Spades 6", "Spades 7", "Spades 8", "Spades 9",
+                 "Spades 10", "Spades J", "Spades Q", "Spades K", "Spades A"
+            ]
+
+    #Opening the Pot - Increase round counter to facilitate big_blind/small_blind rotation
+    print("Round " + str(round) + "\n")
+
+    number = round
+    while number > len(list_CPU_chosen):
+        number -= len(list_CPU_chosen)
+    starting_cash_tabs[list_CPU_chosen[number - 1]] -= 1
+
+    while number + 1 > len(list_CPU_chosen):
+        number -= len(list_CPU_chosen)
+    starting_cash_tabs[list_CPU_chosen[number]] -= 2
+
+    global player_big_blind
+    player_big_blind = list_CPU_chosen[number]
+
+    global player_small_blind
+    player_small_blind = list_CPU_chosen[number - 1]
+
+    print(player_big_blind + " pays the big blind and " + player_small_blind + " pays the small blind\n")
+
+    pot += 3
+    
+    global raise_decision
+    raise_decision = True
+    time.sleep(2)
+
+    # only run CPU functions of those chosen, list_CPU_chosen[round - 1]/player_small_blind will go first every round
+    # Note: EVEN IF raise_decision = True, player_small_blind STILL GOES FIRST FOR SUBSEQUENT ROUNDS
+    # order_list is NOT to reshuffle the seating arrangements (that is done before)
+        # order_list is to ensure the starting player goes to the next player_small_blid for every new round
+
+    order = deque(list_CPU_chosen)
+    index = list_CPU_chosen.index(player_small_blind)
+    order.rotate(index)
+
+    global order_list
+    order_list = list(order)
+
+    global competing_list
+    competing_list = order_list
+
+    for i in order_list:
+        if i == "Alfred":
+            Alfred_Pre_Flop()
+        elif i == "Benjamin":
+            Benjamin_Pre_Flop()
+        elif i == "Cedric":
+            Cedric_Pre_Flop()
+        elif i == "Damon":
+            Damon_Pre_Flop()
+        elif i == "Ella":
+            Ella_Pre_Flop()
+        elif i == "Fanny":
+            Fanny_Pre_Flop()
+        elif i == "Gerald":
+            Gerald_Pre_Flop()
+        elif i == "Harry":
+            Harry_Pre_Flop()
+        elif i == "Isabelle":
+            Isabelle_Pre_Flop()
+        elif i == "Jane":
+            Jane_Pre_Flop()
+        elif i == player_name:
+            Player_Pre_Flop()
+
+    global running_sunk_cost
+    for player in order_list:
+        running_sunk_cost[player] = 0
+
+    global running_total_sunk_cost
+    for player in order_list:
+        running_total_sunk_cost[player] = 0
+
+    ### A split pot can occur here as well, must code for it
+    running_sunk_cost[player_small_blind] = 1
+    running_total_sunk_cost[player_small_blind] = 1
+    running_sunk_cost[player_big_blind] = 2
+    running_total_sunk_cost[player_big_blind] = 2
+    for player in order_list:
+        if starting_cash_tabs[player] == 0:
+            split_pot = True
+
+
+    global running_call_price
+    running_call_price = 2
+
+# running_sunk_cost will be used in tandem with running_call_price to ascertain the amount required by each player to call/raise
+    # must reset running_sunk_cost each turn (DONE)
+# Assuming there are no all-in amounts that fall short of running_call_price, only when running_sunk_cost is the same for each player in order_list, does the next turn start (KIV)
+# order_list is used to decide which player goes first in each turn
+    # must remove players who fold from order_list + running_sunk_costs and reset order_list + running_sunk_costs to list_CPU_chosen each round (KIV)
+def player_action():
+    global order_list
+    global running_sunk_cost
+    global running_total_sunk_cost
+    global count
+    global jump_to_showdown
+    global starting_cash_tabs
+    global pot
+    global competing_list
+    global contribution_list
+    global community_cards
+    global Fanny_condition
+    global fold_list
+    global round_end
+    global contribution_list
+
+    print("Cash holdings: " + str(starting_cash_tabs) + "\n")
+    print("Pot: " + str(pot) + "\n")
+    time.sleep(2)
+
+    if post_flop == True:
+        for i in order_list:
+            if i == "Alfred":
+                Alfred_Post_Flop()
+            elif i == "Benjamin":
+                Benjamin_Post_Flop()
+            elif i == "Cedric":
+                Cedric_Post_Flop()
+            elif i == "Damon":
+                Damon_Post_Flop()
+            elif i == "Ella":
+                Ella_Post_Flop()
+            elif i == "Fanny":
+                Fanny_Post_Flop()
+            elif i == "Gerald":
+                Gerald_Post_Flop()
+            elif i == "Harry":
+                Harry_Post_Flop()
+            elif i == "Isabelle":
+                Isabelle_Post_Flop()
+            elif i == "Jane":
+                Jane_Post_Flop()
+
+    count = 0 #correct, this counter fulfills the condition when everyone calls/checks
+    finished = False
+    while finished == False:
+        for i in itertools.cycle(order_list):
+            if split_pot == True:
+                for g in order_list:
+                    if starting_cash_tabs[g] == 0:
+                        starting_cash_tabs[g] = "ALL IN" #we remove him from subsequent rounds (CANNOT TOUCH)
+                        print(starting_cash_tabs)
+            count += 1
+            if count > len(order_list):
+                check = 0
+                for player in order_list:
+                    if starting_cash_tabs[player] != 'ALL IN':
+                        check += 1
+                if check <= 1:  # all except one/everyone all-ins
+                    jump_to_showdown = True
+                finished = True
+                break
+            if starting_cash_tabs[i] != "ALL IN":
+                if len(fold_list) + 1 == len(order_list):
+                    for winning_player in order_list:
+                        if winning_player not in fold_list:
+                            print(winning_player + " won " + str(pot) + " dollars!\n")
+                            time.sleep(1.5)
+                            if starting_cash_tabs[winning_player] == "ALL IN":
+                                starting_cash_tabs[winning_player] = pot
+                            else:
+                                starting_cash_tabs[winning_player] += pot
+                            all_lucky_guys.append(winning_player)
+                    round_end = True
+                    finished = True
+                    break
+                if i in fold_list:
+                    count -= 1
+                else:
+                    if i == "Alfred":
+                        Alfred_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Benjamin":
+                        Benjamin_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Cedric":
+                        Cedric_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Damon":
+                        Damon_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Ella":
+                        Ella_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Fanny":
+                        Fanny_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Gerald":
+                        Gerald_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Harry":
+                        Harry_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Isabelle":
+                        Isabelle_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == "Jane":
+                        Jane_Decision()
+                        print()
+                        time.sleep(1)
+                    elif i == player_name:
+                        Player_Decision()
+                        print()
+                        time.sleep(1)
+
+    for player in fold_list:
+        if player in order_list:
+            order_list.remove(player)
+    fold_list = []
+
+    starting_index = len(contribution_list)
+    if split_pot == True:
+        for player in order_list:
+            if starting_cash_tabs[player] == "ALL IN":
+                if [running_total_sunk_cost[player], player] not in contribution_list:
+                    contribution_list.append([running_total_sunk_cost[player], player])
+                    pot -= running_total_sunk_cost[player]
+        contribution_list.sort() #in the event more than one player all-in in one turn, the all-in guy with the lowest amount of money gets evaluated first
+        for i in range(starting_index, len(contribution_list)):
+            entitled_pot_amount = contribution_list[i][0] * (len(order_list))  # if the all-in guy wins, how much is he entitled to get
+            split_pot_activated(order_list, entitled_pot_amount)
+
+    global running_call_price
+    running_call_price = 0
+
+    global raise_decision
+    raise_decision = False
+
+    for player in order_list:
+        running_sunk_cost[player] = 0
+
+def Player_Pre_Flop():
+    global hole_cards
+    hole_cards = random.sample(deck_List, 2)
+    global player_first_card
+    player_first_card = hole_cards[0]
+    global player_second_card
+    player_second_card = hole_cards[1]
+
+    deck_List.remove(player_first_card)
+    deck_List.remove(player_second_card)
+    print("Your First Hole Card: " + player_first_card)
+    print("Your Second Hole Card: " + player_second_card + "\n")
+    time.sleep(2)
+
+
+def Player_Decision():
+    global pot
+    global split_pot
+    global split_pot_name_list
+    global split_pot_amount
+    global player_pre_flop_input
+    global player_pre_flop_raise_input
+    global running_call_price
+    global running_sunk_cost
+    global running_total_sunk_cost
+    global player_name
+    global order_list
+    global count
+    global round_end
+    global raise_decision
+    global all_lucky_guys
+    global fold_list
+
+    print("Total Investment: " + str(running_total_sunk_cost))
+    print("Call price is " + str(running_call_price))
+    print()
+
+    if running_call_price == running_sunk_cost[player_name]:
+        valid = False
+        while valid == False:
+            test = False
+            while test == False:
+                if raise_decision == False:
+                    player_pre_flop_input = input('Enter 1 to CHECK, Enter 2 to BET, Enter 3 to FOLD: ')
+                    if player_pre_flop_input.isdigit():
+                        test = True
+                    else:
+                        print("INVALID INPUT: MUST ENTER A NUMBER")
+                else:
+                    player_pre_flop_input = input('Enter 1 to CHECK, Enter 2 to RAISE, Enter 3 to FOLD: ')
+                    if player_pre_flop_input.isdigit():
+                        test = True
+                    else:
+                        print("INVALID INPUT: MUST ENTER A NUMBER")
+            player_pre_flop_input = int(player_pre_flop_input)
+            if player_pre_flop_input in range(1,4):
+                valid = True
+            else:
+                print("INVALID INPUT: NUMBER NOT WITHIN THE RANGE OF 1-3")
+        if player_pre_flop_input == 1:
+            print(player_name + " checked")
+        elif player_pre_flop_input == 2:
+            valid = False
+            while valid == False:
+                test = False
+                while test == False:
+                    if raise_decision == False:
+                        player_pre_flop_raise_input = input("Enter the number of dollars you want to BET: (1-" + str(running_sunk_cost[player_name] + starting_cash_tabs[player_name] - running_call_price) + "):")
+                        if str(player_pre_flop_raise_input).isdigit():
+                            test = True
+                        else:
+                            print("INVALID INPUT: MUST ENTER A NUMBER")
+                    else:
+                        player_pre_flop_raise_input = input("Enter the number of dollars you want to RAISE (1-" + str(running_sunk_cost[player_name] + starting_cash_tabs[player_name] - running_call_price) + "):")
+                        if str(player_pre_flop_raise_input).isdigit():
+                            test = True
+                        else:
+                            print("INVALID INPUT: MUST ENTER A NUMBER")
+                player_pre_flop_raise_input = int(player_pre_flop_raise_input)
+                if player_pre_flop_raise_input == 0 or (player_pre_flop_raise_input + running_call_price - running_sunk_cost[player_name]) > starting_cash_tabs[player_name]:
+                    print("INVALID INPUT: INVALID NUMBER ENTERED")
+                else:
+                    valid = True
+            if player_pre_flop_raise_input > 0 and (player_pre_flop_raise_input + running_call_price - running_sunk_cost[player_name]) < starting_cash_tabs[player_name]:
+                running_call_price += player_pre_flop_raise_input
+                running_total_sunk_cost[player_name] += running_call_price - running_sunk_cost[player_name]
+                if raise_decision == False:
+                    print(player_name + " betted " + str(player_pre_flop_raise_input) + " dollars.")
+                    starting_cash_tabs[player_name] -= (running_call_price - running_sunk_cost[player_name])
+                    pot += (running_call_price - running_sunk_cost[player_name])
+                    running_sunk_cost[player_name] = running_call_price
+                    count = 1
+                    raise_decision = True
+                else:
+                    print(player_name + " raised " + str(player_pre_flop_raise_input) + " dollars.")
+                    starting_cash_tabs[player_name] -= (running_call_price - running_sunk_cost[player_name])
+                    pot += (running_call_price - running_sunk_cost[player_name])
+                    running_sunk_cost[player_name] = running_call_price
+                    count = 1
+            else:
+                running_call_price += player_pre_flop_raise_input
+                print("OMG " + player_name + " has decided to all in with " + str(running_call_price - running_sunk_cost[player_name]) + " dollars!!!")
+                running_total_sunk_cost[player_name] += starting_cash_tabs[player_name]
+                starting_cash_tabs[player_name] = 0
+                pot += (running_call_price - running_sunk_cost[player_name])
+                count = 1
+                split_pot = True
+        else:
+            print(player_name + " folded.")
+            del running_sunk_cost[player_name]
+            fold_list.append(player_name)
+            time.sleep(0.5)
+
+    else:
+        valid = False
+        while valid == False:
+            test = False
+            while test == False:
+                if raise_decision == False:
+                    player_pre_flop_input = input('Enter 1 to CALL, Enter 2 to BET, Enter 3 to FOLD: ')
+                    if player_pre_flop_input.isdigit():
+                        test = True
+                    else:
+                        print("INVALID INPUT: MUST ENTER A NUMBER")
+                else:
+                    player_pre_flop_input = input('Enter 1 to CALL, Enter 2 to RAISE, Enter 3 to FOLD: ')
+                    if player_pre_flop_input.isdigit():
+                        test = True
+                    else:
+                        print("INVALID INPUT: MUST ENTER A NUMBER")
+            player_pre_flop_input = int(player_pre_flop_input)
+            if player_pre_flop_input in range(1, 4):
+                valid = True
+            else:
+                print("INVALID INPUT: NUMBER NOT WITHIN THE RANGE OF 1-3")
+        if player_pre_flop_input == 1:
+            if running_call_price - running_sunk_cost[player_name] < starting_cash_tabs[player_name]:
+                print(player_name + " called " + str(running_call_price) + " dollars.")
+                starting_cash_tabs[player_name] -= (running_call_price - running_sunk_cost[player_name])
+                pot += (running_call_price - running_sunk_cost[player_name])
+                running_total_sunk_cost[player_name] += (running_call_price - running_sunk_cost[player_name])
+                running_sunk_cost[player_name] = running_call_price
+            else:
+                print("OMG " + player_name + " has decided to all in with " + str(starting_cash_tabs[player_name]) + " dollars!!!")
+                pot += (running_call_price - running_sunk_cost[player_name])
+                running_total_sunk_cost[player_name] += starting_cash_tabs[player_name]
+                running_sunk_cost[player_name] += starting_cash_tabs[player_name]
+                starting_cash_tabs[player_name] = 0
+                split_pot = True
+        elif player_pre_flop_input == 2:
+            valid = False
+            while valid == False:
+                test = False
+                while test == False:
+                    if raise_decision == False:
+                        player_pre_flop_raise_input = input("Enter the number of dollars you want to BET (1-" + str(running_sunk_cost[player_name] + starting_cash_tabs[player_name] - running_call_price) + "):")
+                        if str(player_pre_flop_raise_input).isdigit():
+                            test = True
+                        else:
+                            print("INVALID INPUT: MUST ENTER A NUMBER")
+                    else:
+                        player_pre_flop_raise_input = input("Enter the number of dollars you want to RAISE (1-" + str(running_sunk_cost[player_name] + starting_cash_tabs[player_name] - running_call_price) + "):")
+                        if str(player_pre_flop_raise_input).isdigit():
+                            test = True
+                        else:
+                            print("INVALID INPUT: MUST ENTER A NUMBER")
+                player_pre_flop_raise_input = int(player_pre_flop_raise_input)
+                if player_pre_flop_raise_input == 0 or (player_pre_flop_raise_input + running_call_price - running_sunk_cost[player_name]) > starting_cash_tabs[player_name]:
+                    print("INVALID INPUT: INVALID NUMBER ENTERED")
+                else:
+                    valid = True
+            if player_pre_flop_raise_input > 0 and (player_pre_flop_raise_input + running_call_price - running_sunk_cost[player_name]) < starting_cash_tabs[player_name]:
+                running_call_price += player_pre_flop_raise_input
+                running_total_sunk_cost[player_name] += (running_call_price - running_sunk_cost[player_name])
+                if raise_decision == False:
+                    print(player_name + " betted " + str(player_pre_flop_raise_input) + " dollars.")
+                    starting_cash_tabs[player_name] -= (running_call_price - running_sunk_cost[player_name])
+                    pot += (running_call_price - running_sunk_cost[player_name])
+                    running_sunk_cost[player_name] = running_call_price
+                    count = 1
+                    raise_decision = True
+                else:
+                    print(player_name + " raised " + str(player_pre_flop_raise_input) + " dollars.")
+                    starting_cash_tabs[player_name] -= (running_call_price - running_sunk_cost[player_name])
+                    pot += (running_call_price - running_sunk_cost[player_name])
+                    running_sunk_cost[player_name] = running_call_price
+                    count = 1
+            else:
+                running_call_price += player_pre_flop_raise_input
+                print("OMG " + player_name + " has decided to all in with " + str(running_call_price - running_sunk_cost[player_name]) + " dollars!!!")
+                running_total_sunk_cost[player_name] += starting_cash_tabs[player_name]
+                starting_cash_tabs[player_name] = 0
+                pot += (running_call_price - running_sunk_cost[player_name])
+                running_sunk_cost[player_name] = running_call_price
+                count = 1
+                split_pot = True
+        else:
+            print(player_name + " folded.")
+            del running_sunk_cost[player_name]
+            fold_list.append(player_name)
+            time.sleep(0.5)
+
+
+    print("\nPot money: " + str(pot))
+    print("Cash holdings: " + str(starting_cash_tabs))
+    time.sleep(1.5)
+
+#Game phases
+def deal_flop():
+    global community_cards
+    community_cards = []
+
+    global flop_cards
+    flop_cards = random.sample(deck_List, 3)
+    first_card = flop_cards[0]
+    second_card = flop_cards[1]
+    third_card = flop_cards[2]
+    print("Here comes the flop! \n")
+    time.sleep(1.5)
+    print("First Flop Card: " + first_card)
+    time.sleep(1)
+    print("Second Flop Card: " + second_card)
+    time.sleep(1)
+    print("Third Flop Card: " + third_card + "\n")
+    time.sleep(1)
+    deck_List.remove(first_card)
+    deck_List.remove(second_card)
+    deck_List.remove(third_card)
+    community_cards.append(first_card)
+    community_cards.append(second_card)
+    community_cards.append(third_card)
+    time.sleep(2)
+    print("Your First Hole Card: " + player_first_card)
+    print("Your Second Hole Card: " + player_second_card + "\n")
+    time.sleep(2)
+    #decision-making
+
+def deal_turn():
+    global turn
+    turn = random.sample(deck_List, 1)
+    turn_card = turn[0]
+    print("Änd now...the turn! \n")
+    time.sleep(1.5)
+    print("Turn Card: " + turn_card)
+    time.sleep(1)
+    deck_List.remove(turn_card)
+    community_cards.append(turn_card)
+    print("\nThe community cards are as follows:")
+    print(community_cards[0])
+    print(community_cards[1])
+    print(community_cards[2])
+    print(community_cards[3] + "\n")
+    time.sleep(2)
+    print("Your First Hole Card: " + player_first_card)
+    print("Your Second Hole Card: " + player_second_card + "\n")
+    time.sleep(2)
+    #decision-making
+
+def deal_river():
+    global river
+    river = random.sample(deck_List, 1)
+    river_card = river[0]
+    print("Let's hope the river flows long for you... \n")
+    time.sleep(1.5)
+    print("River Card: " + river_card)
+    time.sleep(1)
+    deck_List.remove(river_card)
+    community_cards.append(river_card)
+    print("\nThe community cards are as follows:")
+    print(community_cards[0])
+    print(community_cards[1])
+    print(community_cards[2])
+    print(community_cards[3])
+    print(community_cards[4])
+    time.sleep(2)
+    print("Your First Hole Card: " + player_first_card)
+    print("Your Second Hole Card: " + player_second_card)
+    time.sleep(2)
+
+#CPU stuff
+def CPU_Pre_Flop():
+    hole_cards = random.sample(deck_List, 2)
+    first_card = hole_cards[0]
+    second_card = hole_cards[1]
+
+    deck_List.remove(first_card)
+    deck_List.remove(second_card)
+
+    return [first_card, second_card]
+
+def CPU_Pre_Flop_Evaluation(CPU_first_card, CPU_second_card): ##code for dynamic evaluation of card strength
+    global stage
+    global community_cards
+
+    single_card_points = {"Diamonds 2": 1, "Diamonds 3": 2, "Diamonds 4": 3, "Diamonds 5": 4, "Diamonds 6": 5,
+                          "Diamonds 7": 6, "Diamonds 8": 7, "Diamonds 9": 8, "Diamonds 10": 9, "Diamonds J": 10,
+                          "Diamonds Q": 11, "Diamonds K": 12, "Diamonds A": 13, "Clubs 2": 1, "Clubs 3": 2, "Clubs 4": 3,
+                          "Clubs 5": 4, "Clubs 6": 5, "Clubs 7": 6, "Clubs 8": 7, "Clubs 9": 8, "Clubs 10": 9,
+                          "Clubs J": 10, "Clubs Q": 11, "Clubs K": 12, "Clubs A": 13, "Hearts 2": 1, "Hearts 3": 2,
+                          "Hearts 4": 3, "Hearts 5": 4, "Hearts 6": 5, "Hearts 7": 6, "Hearts 8": 7, "Hearts 9": 8,
+                          "Hearts 10": 9, "Hearts J": 10, "Hearts Q": 11, "Hearts K": 12, "Hearts A": 13,
+                          "Spades 2": 1, "Spades 3": 2, "Spades 4": 3, "Spades 5": 4, "Spades 6": 5, "Spades 7": 6,
+                          "Spades 8": 7, "Spades 9": 8, "Spades 10": 9, "Spades J": 10, "Spades Q": 11, "Spades K": 12,
+                          "Spades A": 13
+                          }
+    pair_card_points = {"2": 26, "3": 27, "4": 28, "5": 29, "6": 30, "7": 31, "8": 32, "9": 33, "10": 34, "J": 35,
+                        "Q": 36, "K": 37, "A": 38}
+
+    if CPU_first_card[-1] != CPU_second_card[-1]:
+        points = single_card_points[CPU_first_card] + single_card_points[CPU_second_card]
+    else:
+        points = pair_card_points[CPU_first_card[-1]]
+
+    return points
+
+#CPU engages in dynamic evaluation and assesses the likelihood of their cards forming a 5-card combination throughout each turn.
+def CPU_Post_Flop_Evaluation(community_cards, hole_cards):
+    royalflush = False
+    straightflush = False
+    fourofakind = False
+    fullhouse = False
+    flush = False
+    straight = False
+
+    pool = community_cards + hole_cards
+
+    #check royalflush
+    royal_flush_check_digits = ["0", "J", "Q", "K", "A"]
+    check_suits = ["D", "C", "H", "S"]
+    list = []
+    for card in pool:
+        if card[-1] in royal_flush_check_digits:
+            royal_flush_check_digits.remove(card[-1])
+            list.append(card)
+    if len(royal_flush_check_digits) < 2:
+        for j in list:
+            if j[0] in check_suits:
+                check_suits.remove(j[0])
+        if len(check_suits) >= 2:
+            #print("Royalflushtrue")
+            royalflush = True
+
+    if royalflush == True:
+        points = 70
+        return points
+
+    #check straightflush
+    straight_check_digits = ["2", "3", "4", "5", "6", "7", "8", "9", "0", "J", "Q", "K", "A"]
+    check_suits = ["D", "C", "H", "S"]
+    list1 = []
+    checking_list = []
+    for card in pool:
+        list1.append(straight_check_digits.index(card[-1]))
+    for j in list1:
+        list2 = []
+        if j + 1 in list1:
+            if j + 2 in list1:
+                if j + 3 in list1:
+                    list2.append(straight_check_digits[j + 3])
+                    list2.append(straight_check_digits[j + 2])
+                    list2.append(straight_check_digits[j + 1])
+                    list2.append(straight_check_digits[j])
+                    break
+        if len(list2) == 4:
+            for card in pool:
+                if straight_check_digits.index(card[-1]) in list2:
+                    checking_list.append(card)
+            for f in checking_list:
+                if f[0] in check_suits:
+                    check_suits.remove(f[0])
+            if len(check_suits) == 3:
+                #print("straightflushtrue")
+                straightflush = True
+
+    if straightflush == True:
+        points = 65
+        return points
+
+    #check fourofakind
+    list = []
+    for card in pool:
+        list.append(card[-1])
+        m = mode(list)
+        j = list.count(m)
+    if j >= 3:
+        #print("fourofakindtrue")
+        fourofakind = True
+
+    if fourofakind == True:
+        points = 60
+        return points
+
+    #check fullhouse
+    list = []
+    for card in pool:
+        list.append(card[-1])
+        l = mode(list)
+        j = list.count(l)
+    if j >= 2:
+        list = [i for i in list if i != l]
+        g = mode(list)
+        k = list.count(g)
+        if k >= 2:
+            #print("fullhousetrue")
+            fullhouse = True
+
+    if fullhouse == True:
+        points = 55
+        return points
+
+    #check flush
+    list = []
+    for card in pool:
+        list.append(card[0])
+    suit = mode(list)
+    j = list.count(suit)
+    if j >= 4:
+        #print("flushtrue")
+        flush = True
+
+    if flush == True:
+        points = 50
+        return points
+
+    #check straight
+    straight_check_digits = ["2", "3", "4", "5", "6", "7", "8", "9", "0", "J", "Q", "K", "A"]
+    list = []
+    for card in pool:
+        list.append(straight_check_digits.index(card[-1]))
+    for j in list:
+        if j + 1 in list:
+            if j + 2 in list:
+                if j + 3 in list:
+                    #print("straightrue")
+                    straight = True
+
+    if straight == True:
+        points = 45
+        return points
+    else:
+        outcome = "NO CHANGE"
+        #print("NOTHING")
+        return outcome
+
+
+#CPU sees and evaluates hand quality
+def Alfred_Pre_Flop(): #done
+    global Alfred_first_card
+    global Alfred_second_card
+    global Alfred_points
+
+    Alfred_first_card, Alfred_second_card = CPU_Pre_Flop()
+    Alfred_points = CPU_Pre_Flop_Evaluation(Alfred_first_card, Alfred_second_card)
+
+def Alfred_Post_Flop(): #done
+    global Alfred_points
+
+    Alfred_points = CPU_Post_Flop_Evaluation(community_cards, [Alfred_first_card, Alfred_second_card])
+    if Alfred_points == "NO CHANGE":
+        Alfred_points = CPU_Pre_Flop_Evaluation(Alfred_first_card, Alfred_second_card)
+
+def Benjamin_Pre_Flop(): #done
+    global Benjamin_first_card
+    global Benjamin_second_card
+    global Benjamin_points
+
+    Benjamin_first_card, Benjamin_second_card = CPU_Pre_Flop()
+    Benjamin_points = CPU_Pre_Flop_Evaluation(Benjamin_first_card, Benjamin_second_card)
+
+def Benjamin_Post_Flop(): #done
+    global Benjamin_points
+    global average_money
+    
+    x = CPU_Post_Flop_Evaluation(community_cards, [Benjamin_first_card, Benjamin_second_card])
+    if x == "NO CHANGE":
+        x = CPU_Pre_Flop_Evaluation(Benjamin_first_card, Benjamin_second_card)
+
+    if average_money > 400 and average_money <= 600:
+        if pot > 100 and pot <= 175:
+            Benjamin_points = 5 * (x // 6)
+        elif pot > 175 and pot <= 250:
+            Benjamin_points = 4 * (x // 5)
+        elif pot > 250 and pot <= 325:
+            Benjamin_points = 3 * (x // 4)
+        else:
+            Benjamin_points = 2 * (x // 3)
+
+    if average_money > 250 and average_money <= 400:
+        if pot > 75 and pot <= 125:
+            Benjamin_points = 5 * (x // 6)
+        elif pot > 125 and pot <= 175:
+            Benjamin_points = 4 * (x // 5)
+        elif pot > 175 and pot <= 225:
+            Benjamin_points = 3 * (x // 4)
+        else:
+            Benjamin_points = 2 * (x // 3)
+
+    else:
+        if pot > 50 and pot <= 80:
+            Benjamin_points = 5 * (x // 6)
+        elif pot > 80 and pot <= 110:
+            Benjamin_points = 4 * (x // 5)
+        elif pot > 110 and pot <= 140:
+            Benjamin_points = 3 * (x // 4)
+        else:
+            Benjamin_points = 2 * (x // 3)
+
+
+def Cedric_Pre_Flop(): #done
+    global Cedric_first_card
+    global Cedric_second_card
+    global Cedric_points
+
+    Cedric_first_card, Cedric_second_card = CPU_Pre_Flop()
+    x = CPU_Pre_Flop_Evaluation(Cedric_first_card, Cedric_second_card)
+    Cedric_points = 3 * (x // 2)
+
+def Cedric_Post_Flop(): #done
+    global Cedric_points
+
+    Cedric_points = CPU_Post_Flop_Evaluation(community_cards, [Cedric_first_card, Cedric_second_card])
+    if Cedric_points == "NO CHANGE":
+        Cedric_points = CPU_Pre_Flop_Evaluation(Cedric_first_card, Cedric_second_card)
+
+def Damon_Pre_Flop(): #done
+    global Damon_first_card
+    global Damon_second_card
+    global Damon_points
+
+    Damon_first_card, Damon_second_card = CPU_Pre_Flop()
+    Damon_points = CPU_Pre_Flop_Evaluation(Damon_first_card, Damon_second_card)
+
+def Damon_Post_Flop(): #done
+    global Damon_points
+
+    Damon_points = CPU_Post_Flop_Evaluation(community_cards, [Damon_first_card, Damon_second_card])
+    if Damon_points == "NO CHANGE":
+        Damon_points = CPU_Pre_Flop_Evaluation(Damon_first_card, Damon_second_card)
+
+def Ella_Pre_Flop(): #done
+    global Ella_first_card
+    global Ella_second_card
+    global Ella_points
+
+    Ella_first_card, Ella_second_card = CPU_Pre_Flop()
+    Ella_points = CPU_Pre_Flop_Evaluation(Ella_first_card, Ella_second_card)
+
+def Ella_Post_Flop(): #done
+    global Ella_points
+    global Ella_condition
+
+    Ella_points = CPU_Post_Flop_Evaluation(community_cards, [Ella_first_card, Ella_second_card])
+    if Ella_points == "NO CHANGE":
+        Ella_points = CPU_Pre_Flop_Evaluation(Ella_first_card, Ella_second_card)
+    if Ella_condition == True:
+        Ella_points = (Ella_points // 3) * 4
+        Ella_condition = False
+
+def Fanny_Pre_Flop(): #done
+    global Fanny_first_card
+    global Fanny_second_card
+    global Fanny_points
+
+    Fanny_first_card, Fanny_second_card = CPU_Pre_Flop()
+    Fanny_points = CPU_Pre_Flop_Evaluation(Fanny_first_card, Fanny_second_card)
+
+def Fanny_Post_Flop(): #done
+    global Fanny_points
+
+    Fanny_points = CPU_Post_Flop_Evaluation(community_cards, [Fanny_first_card, Fanny_second_card])
+    if Fanny_points == "NO CHANGE":
+        Fanny_points = CPU_Pre_Flop_Evaluation(Fanny_first_card, Fanny_second_card)
+
+def Gerald_Pre_Flop():
+    global Gerald_first_card
+    global Gerald_second_card
+    global Gerald_points
+
+    Gerald_first_card, Gerald_second_card = CPU_Pre_Flop()
+    Gerald_points = CPU_Pre_Flop_Evaluation(Gerald_first_card, Gerald_second_card)
+
+def Gerald_Post_Flop():
+    global Gerald_points
+
+    Gerald_points = CPU_Post_Flop_Evaluation(community_cards, [Gerald_first_card, Gerald_second_card])
+    if Gerald_points == "NO CHANGE":
+        Gerald_points = CPU_Pre_Flop_Evaluation(Gerald_first_card, Gerald_second_card)
+
+def Harry_Pre_Flop():
+    global Harry_first_card
+    global Harry_second_card
+    global Harry_points
+
+    Harry_first_card, Harry_second_card = CPU_Pre_Flop()
+    Harry_points = CPU_Pre_Flop_Evaluation(Harry_first_card, Harry_second_card)
+
+def Harry_Post_Flop():
+    global Harry_points
+
+    Harry_points = CPU_Post_Flop_Evaluation(community_cards, [Harry_first_card, Harry_second_card])
+    if Harry_points == "NO CHANGE":
+        Harry_points = CPU_Pre_Flop_Evaluation(Harry_first_card, Harry_second_card)
+
+def Isabelle_Pre_Flop():
+    global Isabelle_first_card
+    global Isabelle_second_card
+    global Isabelle_points
+
+    Isabelle_first_card, Isabelle_second_card = CPU_Pre_Flop()
+    Isabelle_points = CPU_Pre_Flop_Evaluation(Isabelle_first_card, Isabelle_second_card)
+
+def Isabelle_Post_Flop():
+    global Isabelle_points
+
+    Isabelle_points = CPU_Post_Flop_Evaluation(community_cards, [Isabelle_first_card, Isabelle_second_card])
+    if Isabelle_points == "NO CHANGE":
+        Isabelle_points = CPU_Pre_Flop_Evaluation(Isabelle_first_card, Isabelle_second_card)
+
+def Jane_Pre_Flop():
+    global Jane_first_card
+    global Jane_second_card
+    global Jane_points
+
+    Jane_first_card, Jane_second_card = CPU_Pre_Flop()
+    Jane_points = CPU_Pre_Flop_Evaluation(Jane_first_card, Jane_second_card)
+
+def Jane_Post_Flop():
+    global Jane_points
+
+    Jane_points = CPU_Post_Flop_Evaluation(community_cards, [Jane_first_card, Jane_second_card])
+    if Jane_points == "NO CHANGE":
+        Jane_points = CPU_Pre_Flop_Evaluation(Jane_first_card, Jane_second_card)
+
+#CPU Decision-making metric (need to modify variables to engineer distinct behavior)
+#All-in scenarios must include split_pot function
+
+def CPU_Decision(CPU, CPU_points, lower_bound, middle_bound): #name, evaluation of card quality, point cutoff for "bad cards", "average cards"
+    global pot
+    global split_pot
+    global jump_to_showdown
+    global starting_cash_tabs
+    global running_call_price
+    global running_sunk_cost
+    global running_total_sunk_cost
+    global random_behavior
+    global raise_decision
+    global count
+    global round_end
+    global all_lucky_guys
+    global fold_list
+
+    if running_sunk_cost[CPU] == running_call_price:
+        if CPU_points < middle_bound:
+            randomness()
+            if random_behavior <= 8:
+                print(CPU + " checked")
+                time.sleep(0.5)
+            else:
+                randomness()
+                if random_behavior <= 8 and math.ceil(CPU_points // 6) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 6)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 6)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision  == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 6)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 6)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                elif random_behavior == 9 and math.ceil(CPU_points // 3) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 3)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 3)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 3)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 3)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                else:
+                    print(CPU + " checked")
+                    time.sleep(0.5)
+
+        else:
+            randomness()
+            if random_behavior <= 2:
+                print(CPU + " checked")
+                time.sleep(0.5)
+            else:
+                randomness()
+                if random_behavior <= 2 and math.ceil(CPU_points // 6) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 6)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 6)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 6)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 6)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+
+                elif random_behavior > 2 and random_behavior <= 9 and math.ceil(CPU_points // 3) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 3)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 3)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 3)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 3)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                else:
+                    print(CPU + " checked")
+                    time.sleep(0.5)
+
+    else: ####when running_sunk_cost[CPU] < running_call_price, there will be situations where Alfred all-ins but doesnt hit the running_call_price amount. Need to backtrack contributions to the pot by previous players in that round to ensure pot split is fair
+        if CPU_points <= lower_bound:
+            randomness()
+            if random_behavior <= 8:
+                print(CPU + " folded")
+                del running_sunk_cost[CPU]
+                fold_list.append(CPU)
+                time.sleep(0.5)
+            elif random_behavior == 9:
+                randomness()
+                if random_behavior <= 8 and math.ceil(CPU_points // 6) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 6)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 6)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 6)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 6)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                elif random_behavior == 9 and math.ceil(CPU_points // 3) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 3)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 3)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 3)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 3)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                else:
+                    print(CPU + " folded")
+                    del running_sunk_cost[CPU]
+                    fold_list.append(CPU)
+                    time.sleep(0.5)
+            else:
+                if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                    print(CPU + " called " + str(running_call_price) + " dollars.")
+                    starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                    pot += (running_call_price - running_sunk_cost[CPU])
+                    running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                    running_sunk_cost[CPU] = running_call_price
+                else:  ##Backtrack pot
+                    print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars.")
+                    pot += starting_cash_tabs[CPU]
+                    running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                    split_pot = True
+                    starting_cash_tabs[CPU] = 0
+
+        elif CPU_points > lower_bound and CPU_points < middle_bound:
+            randomness()
+            if random_behavior == 10:
+                print(CPU + " folded")
+                del running_sunk_cost[CPU]
+                fold_list.append(CPU)
+                time.sleep(0.5)
+            elif random_behavior > 5 and random_behavior < 10:
+                randomness()
+                if random_behavior <= 8 and math.ceil(CPU_points // 6) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 6)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 6)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 6)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 6)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                elif random_behavior == 9 and math.ceil(CPU_points // 3) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 3)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 3)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 3)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 3)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                else:
+                    print(CPU + " folded")
+                    del running_sunk_cost[CPU]
+                    fold_list.append(CPU)
+                    time.sleep(0.5)
+            else:
+                if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                    print(CPU + " called " + str(running_call_price) + " dollars.")
+                    starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                    pot += (running_call_price - running_sunk_cost[CPU])
+                    running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                    running_sunk_cost[CPU] = running_call_price
+
+                else: ####backtrack pot
+                    print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars.")
+                    pot += starting_cash_tabs[CPU]
+                    running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                    split_pot = True
+                    starting_cash_tabs[CPU] = 0
+
+        else:
+            randomness()
+            if random_behavior > 2:
+                randomness()
+                if random_behavior <= 2 and math.ceil(CPU_points // 6) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 6)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 6)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 6)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 6)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                elif random_behavior > 2 and random_behavior <= 9 and math.ceil(CPU_points // 3) >= 1:
+                    if ((running_call_price - running_sunk_cost[CPU]) + math.ceil(CPU_points // 3)) < starting_cash_tabs[CPU]:
+                        running_call_price += math.ceil(CPU_points // 3)
+                        pot += (running_call_price - running_sunk_cost[CPU])
+                        starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                        running_total_sunk_cost[CPU] += (running_call_price - running_sunk_cost[CPU])
+                        running_sunk_cost[CPU] = running_call_price
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " betted " + str(math.ceil(CPU_points // 3)) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " raised " + str(math.ceil(CPU_points // 3)) + " dollars")
+                    else:
+                        if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                            running_call_price = starting_cash_tabs[CPU]
+                        pot += starting_cash_tabs[CPU]
+                        running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                        split_pot = True
+                        count = 1
+                        if raise_decision == False:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                            raise_decision = True
+                        else:
+                            print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars")
+                        starting_cash_tabs[CPU] = 0
+                else:
+                    print(CPU + " folded")
+                    del running_sunk_cost[CPU]
+                    fold_list.append(CPU)
+                    time.sleep(0.5)
+            else:
+                if (running_call_price - running_sunk_cost[CPU]) < starting_cash_tabs[CPU]:
+                    print(CPU + " called " + str(running_call_price) + " dollars.")
+                    starting_cash_tabs[CPU] -= (running_call_price - running_sunk_cost[CPU])
+                    pot += (running_call_price - running_sunk_cost[CPU])
+                    running_total_sunk_cost[CPU] += running_call_price - running_sunk_cost[CPU]
+                    running_sunk_cost[CPU] = running_call_price
+                else: ###backtrack pot
+                    print(CPU + " goes all-in with " + str(starting_cash_tabs[CPU]) + " dollars.")
+                    pot += starting_cash_tabs[CPU]
+                    running_total_sunk_cost[CPU] += starting_cash_tabs[CPU]
+                    split_pot = True
+                    starting_cash_tabs[CPU] = 0
+
+def Alfred_Decision():
+    point_moderation(Alfred_points)
+    CPU_Decision("Alfred", Alfred_points, 15, 26)
+
+def Benjamin_Decision():
+    point_moderation(Benjamin_points)
+    CPU_Decision("Benjamin", Benjamin_points, 15, 26)
+
+def Cedric_Decision():
+    point_moderation(Cedric_points)
+    CPU_Decision("Cedric", Cedric_points, 15, 26)
+
+def Damon_Decision():
+    point_moderation(Damon_points)
+    CPU_Decision("Damon", Damon_points, 0, 26)
+
+def Ella_Decision():
+    point_moderation(Ella_points)
+    CPU_Decision("Ella", Ella_points, 15, 26)
+
+def Fanny_Decision():
+    point_moderation(Fanny_points)
+    if len(order_list) >= 0.75 * len(list_CPU_chosen):
+        CPU_Decision("Fanny", Fanny_points, 0, 26)
+    else:
+        CPU_Decision("Fanny", Fanny_points, 15, 26)
+
+def Gerald_Decision():
+    point_moderation(Gerald_points)
+    if round < 5:
+        CPU_Decision("Gerald", Gerald_points, 15, 26)
+    elif round >= 5 and round < 10:
+        CPU_Decision("Gerald", Gerald_points, 12, 23)
+    elif round >= 10 and round < 15:
+        CPU_Decision("Gerald", Gerald_points, 9, 20)
+    else:
+        CPU_Decision("Gerald", Gerald_points, 6, 17)
+
+def Harry_Decision():
+    global Harry_counter
+    point_moderation(Harry_points)
+
+    Harry_counter += 1
+    if Harry_counter <= 3:
+        CPU_Decision("Harry", Harry_points, 15, 100)
+    elif Harry_counter == 4 or Harry_counter == 5:
+        CPU_Decision("Harry", Harry_points, 18, 70)
+    elif Harry_counter == 6 or Harry_counter == 7:
+        CPU_Decision("Harry", ((Harry_points // 2) * 3), 21, 40)
+    else:
+        CPU_Decision("Harry", (Harry_points * 2), 31, 32)
+
+def Isabelle_Decision():
+    point_moderation(Isabelle_points)
+    CPU_Decision("Isabelle", Isabelle_points, 20, 21)
+
+def Jane_Decision():
+    point_moderation(Jane_points)
+    CPU_Decision("Jane", Jane_points, 15, 26)
+
+#Scoring (This is the section that has to be constantly tweaked to improve CPU behavior. A more sophisticated project can import data from poker analytics.
+
+def final_scoring():
+    global showdown_list
+    global running_total_sunk_cost
+    global compiled_side_pot_name_list
+    global compiled_side_pot_amount
+    global winner
+    global lucky_guy
+    global all_lucky_guys
+    global starting_cash_tabs
+    global contribution_list
+    global split_pot
+    global pot
+    global alfred_list
+    global benjamin_list
+    global cedric_list
+    global damon_list
+    global ella_list
+    global fanny_list
+    global gerald_list
+    global harry_list
+    global isabelle_list
+    global jane_list
+    global player_list
+    global total
+    global reason
+
+    total = 0
+    for player in list_CPU_chosen:
+        total += running_total_sunk_cost[player]
+    while total != 0:
+        if split_pot == False:
+            showdown_list = []
+
+            for i in order_list:
+                if i == "Alfred":
+                    alfred_list = [Alfred_first_card, Alfred_second_card] + community_cards
+                    print("Alfred's hole cards are " + alfred_list[0] + " and " + alfred_list[1] + "!")
+                    showdown_list.append(alfred_list)
+                elif i == "Benjamin":
+                    benjamin_list = [Benjamin_first_card, Benjamin_second_card] + community_cards
+                    print("Benjamin's hole cards are " + benjamin_list[0] + " and " + benjamin_list[1] + "!")
+                    showdown_list.append(benjamin_list)
+                elif i == "Cedric":
+                    cedric_list = [Cedric_first_card, Cedric_second_card] + community_cards
+                    print("Cedric's hole cards are " + cedric_list[0] + " and " + cedric_list[1] + "!")
+                    showdown_list.append(cedric_list)
+                elif i == "Damon":
+                    damon_list = [Damon_first_card, Damon_second_card] + community_cards
+                    print("Damon's hole cards are " + damon_list[0] + " and " + damon_list[1] + "!")
+                    showdown_list.append(damon_list)
+                elif i == "Ella":
+                    ella_list = [Ella_first_card, Ella_second_card] + community_cards
+                    print("Ella's hole cards are " + ella_list[0] + " and " + ella_list[1] + "!")
+                    showdown_list.append(ella_list)
+                elif i == "Fanny":
+                    fanny_list = [Fanny_first_card, Fanny_second_card] + community_cards
+                    print("Fanny's hole cards are " + fanny_list[0] + " and " + fanny_list[1] + "!")
+                    showdown_list.append(fanny_list)
+                elif i == "Gerald":
+                    gerald_list = [Gerald_first_card, Gerald_second_card] + community_cards
+                    print("Gerald's hole cards are " + gerald_list[0] + " and " + gerald_list[1] + "!")
+                    showdown_list.append(gerald_list)
+                elif i == "Harry":
+                    harry_list = [Harry_first_card, Harry_second_card] + community_cards
+                    print("Harry's hole cards are " + harry_list[0] + " and " + harry_list[1] + "!")
+                    showdown_list.append(harry_list)
+                elif i == "Isabelle":
+                    isabelle_list = [Isabelle_first_card, Isabelle_second_card] + community_cards
+                    print("Isabelle's hole cards are " + isabelle_list[0] + " and " + isabelle_list[1] + "!")
+                    showdown_list.append(isabelle_list)
+                elif i == "Jane":
+                    jane_list = [Jane_first_card, Jane_second_card] + community_cards
+                    print("Jane's hole cards are " + jane_list[0] + " and " + jane_list[1] + "!")
+                    showdown_list.append(jane_list)
+                elif i == player_name:
+                    player_list = [player_first_card, player_second_card] + community_cards
+                    showdown_list.append(player_list)
+
+            #points of order_list[0] appended first, so later just find out index max(points) and use use that index on order_list to find winner
+
+            winner = False
+            while winner == False:
+                var_royal_flush = royal_flush_check()
+                if var_royal_flush == 0:
+                    var_straight_flush = straight_flush_check()
+                    if var_straight_flush == 0:
+                        var_four_of_a_kind = four_of_a_kind_check()
+                        if var_four_of_a_kind == 0:
+                            var_full_house = full_house_check()
+                            if var_full_house == 0:
+                                var_flush = flush_check()
+                                if var_flush == 0:
+                                    var_straight = straight_check()
+                                    if var_straight == 0:
+                                        var_three_of_a_kind = three_of_a_kind_check()
+                                        if var_three_of_a_kind == 0:
+                                            var_two_pair = two_pair_check()
+                                            if var_two_pair == 0:
+                                                var_pair = pair_check()
+                                                if var_pair == 0:
+                                                    high_card_check()
+
+            if len(lucky_guy) == 1:
+                if starting_cash_tabs[lucky_guy[0]] == "ALL IN":
+                    starting_cash_tabs[lucky_guy[0]] = pot
+                else:
+                    starting_cash_tabs[lucky_guy[0]] += pot
+                print(lucky_guy[0] + " won " + str(pot) + " dollars! (" + reason + ")")
+            if len(lucky_guy) >= 2:
+                for i in range(0, len(lucky_guy)):
+                    if starting_cash_tabs[lucky_guy[i]] == "ALL IN":
+                        starting_cash_tabs[lucky_guy[i]] = (pot // len(lucky_guy))
+                    else:
+                        starting_cash_tabs[lucky_guy[i]] += (pot // len(lucky_guy))
+                    print(lucky_guy[i] + " won " + str(pot) + " dollars! (" + reason + ")")
+            total -= pot
+            for player in lucky_guy:
+                all_lucky_guys.append(player)
+
+        else:
+            #list_main_pot = []
+            #for player in order_list:
+            #    if starting_cash_tabs[player] != "ALL IN":
+            #       list_main_pot.append(player)
+            #if len(list_main_pot) > 0:
+            #    compiled_side_pot_name_list.append(list_main_pot) ###add in the MAIN LIST
+            #    compiled_side_pot_amount.append(pot)   ###add in the MAIN POT
+
+            showdown_list = []
+            for i in compiled_side_pot_name_list[0]:
+                if i == "Alfred":
+                    alfred_list = [Alfred_first_card, Alfred_second_card] + community_cards
+                    print("Alfred's hole cards are " + alfred_list[0] + " and " + alfred_list[1] + "!")
+                elif i == "Benjamin":
+                    benjamin_list = [Benjamin_first_card, Benjamin_second_card] + community_cards
+                    print("Benjamin's hole cards are " + benjamin_list[0] + " and " + benjamin_list[1] + "!")
+                elif i == "Cedric":
+                    cedric_list = [Cedric_first_card, Cedric_second_card] + community_cards
+                    print("Cedric's hole cards are " + cedric_list[0] + " and " + cedric_list[1] + "!")
+                elif i == "Damon":
+                    damon_list = [Damon_first_card, Damon_second_card] + community_cards
+                    print("Damon's hole cards are " + damon_list[0] + " and " + damon_list[1] + "!")
+                elif i == "Ella":
+                    ella_list = [Ella_first_card, Ella_second_card] + community_cards
+                    print("Ella's hole cards are " + ella_list[0] + " and " + ella_list[1] + "!")
+                elif i == "Fanny":
+                    fanny_list = [Fanny_first_card, Fanny_second_card] + community_cards
+                    print("Fanny's hole cards are " + fanny_list[0] + " and " + fanny_list[1] + "!")
+                elif i == "Gerald":
+                    gerald_list = [Gerald_first_card, Gerald_second_card] + community_cards
+                    print("Gerald's hole cards are " + gerald_list[0] + " and " + gerald_list[1] + "!")
+                elif i == "Harry":
+                    harry_list = [Harry_first_card, Harry_second_card] + community_cards
+                    print("Harry's hole cards are " + harry_list[0] + " and " + harry_list[1] + "!")
+                elif i == "Isabelle":
+                    isabelle_list = [Isabelle_first_card, Isabelle_second_card] + community_cards
+                    print("Isabelle's hole cards are " + isabelle_list[0] + " and " + isabelle_list[1] + "!")
+                elif i == "Jane":
+                    jane_list = [Jane_first_card, Jane_second_card] + community_cards
+                    print("Jane's hole cards are " + jane_list[0] + " and " + jane_list[1] + "!")
+                elif i == player_name:
+                    player_list = [player_first_card, player_second_card] + community_cards
+
+            x = len(compiled_side_pot_name_list)
+            for g in range(0, x):
+                if total == 0:
+                    break
+
+                pot = compiled_side_pot_amount[g]
+                showdown_list = []
+                for i in compiled_side_pot_name_list[g]:
+                    if i == "Alfred":
+                        showdown_list.append(alfred_list)
+                    elif i == "Benjamin":
+                        showdown_list.append(benjamin_list)
+                    elif i == "Cedric":
+                        showdown_list.append(cedric_list)
+                    elif i == "Damon":
+                        showdown_list.append(damon_list)
+                    elif i == "Ella":
+                        showdown_list.append(ella_list)
+                    elif i == "Fanny":
+                        showdown_list.append(fanny_list)
+                    elif i == "Gerald":
+                        showdown_list.append(gerald_list)
+                    elif i == "Harry":
+                        showdown_list.append(harry_list)
+                    elif i == "Isabelle":
+                        showdown_list.append(isabelle_list)
+                    elif i == "Jane":
+                        showdown_list.append(jane_list)
+                    elif i == player_name:
+                        showdown_list.append(player_list)
+
+                winner = False
+                while winner == False:
+                    var_royal_flush = royal_flush_check()
+                    if var_royal_flush == 0:
+                        var_straight_flush = straight_flush_check()
+                        if var_straight_flush == 0:
+                            var_four_of_a_kind = four_of_a_kind_check()
+                            if var_four_of_a_kind == 0:
+                                var_full_house = full_house_check()
+                                if var_full_house == 0:
+                                    var_flush = flush_check()
+                                    if var_flush == 0:
+                                        var_straight = straight_check()
+                                        if var_straight == 0:
+                                            var_three_of_a_kind = three_of_a_kind_check()
+                                            if var_three_of_a_kind == 0:
+                                                var_two_pair = two_pair_check()
+                                                if var_two_pair == 0:
+                                                    var_pair = pair_check()
+                                                    if var_pair == 0:
+                                                        high_card_check()
+
+                if g != (len(compiled_side_pot_name_list) - 1):
+                    if pot > 0:
+                        if len(lucky_guy) == 1:
+                            if starting_cash_tabs[lucky_guy[0]] == "ALL IN":
+                                starting_cash_tabs[lucky_guy[0]] = pot
+                            else:
+                                starting_cash_tabs[lucky_guy[0]] += pot
+                            print(lucky_guy[0] + " won " + str(pot) + " dollars! (" + reason + ")")
+                            if lucky_guy[0] == contribution_list[g][1]:
+                                compiled_side_pot_name_list[g+1].remove(lucky_guy[0])
+                            else:
+                                compiled_side_pot_name_list[g+1].remove(contribution_list[g][1])
+                        if len(lucky_guy) >= 2:
+                            for i in range(0, len(lucky_guy)):
+                                if starting_cash_tabs[lucky_guy[i]] == "ALL IN":
+                                    starting_cash_tabs[lucky_guy[i]] = (pot // len(lucky_guy))
+                                else:
+                                    starting_cash_tabs[lucky_guy[i]] += (pot // len(lucky_guy))
+                                print(lucky_guy[i] + " won " + str(pot) + " dollars! (" + reason + ")")
+                                if lucky_guy[i] == contribution_list[g][1]:
+                                    compiled_side_pot_name_list[g+1].remove(lucky_guy[i])
+                            if contribution_list[g][1] not in lucky_guy:
+                                compiled_side_pot_name_list[g+1].remove(contribution_list[g][1])
+                        total -= pot
+                        if len(compiled_side_pot_name_list[g + 1]) * running_total_sunk_cost[contribution_list[g + 1][1]] >= total:
+                            compiled_side_pot_amount[g + 1] = total
+                        for player in lucky_guy:
+                            all_lucky_guys.append(player)
+                        if total == 0:
+                            break
+
+                else:
+                    if pot > 0:
+                        if len(lucky_guy) == 1:
+                            if starting_cash_tabs[lucky_guy[0]] == "ALL IN":
+                                starting_cash_tabs[lucky_guy[0]] = pot
+                            else:
+                                starting_cash_tabs[order_list[0]] += pot
+                            print(lucky_guy[0] + " won " + str(pot) + " dollars! (" + reason + ")")
+                        if len(lucky_guy) >= 2:
+                            for i in range(0, len(lucky_guy)):
+                                if starting_cash_tabs[lucky_guy[i]] == "ALL IN":
+                                    starting_cash_tabs[lucky_guy[i]] = (pot // len(lucky_guy))
+                                else:
+                                    starting_cash_tabs[lucky_guy[i]] += (pot // len(lucky_guy))
+                                print(lucky_guy[i] + " won " + str(pot) + " dollars! (" + reason + ")")
+                        total -= pot
+                        for player in lucky_guy:
+                            all_lucky_guys.append(player)
+                        if total == 0:
+                            break
+
+# Remember to account for outlier possibilities (ALWAYS BEST 5 OUT OF 7)
+def high_card_outlier(checking_list):
+    single_card_points = {"Diamonds 2": 1, "Diamonds 3": 2, "Diamonds 4": 3, "Diamonds 5": 4, "Diamonds 6": 5,
+                          "Diamonds 7": 6, "Diamonds 8": 7, "Diamonds 9": 8, "Diamonds 10": 9, "Diamonds J": 10,
+                          "Diamonds Q": 11, "Diamonds K": 12, "Diamonds A": 13, "Clubs 2": 1, "Clubs 3": 2, "Clubs 4": 3,
+                          "Clubs 5": 4, "Clubs 6": 5, "Clubs 7": 6, "Clubs 8": 7, "Clubs 9": 8, "Clubs 10": 9,
+                          "Clubs J": 10, "Clubs Q": 11, "Clubs K": 12, "Clubs A": 13, "Hearts 2": 1, "Hearts 3": 2,
+                          "Hearts 4": 3, "Hearts 5": 4, "Hearts 6": 5, "Hearts 7": 6, "Hearts 8": 7, "Hearts 9": 8,
+                          "Hearts 10": 9, "Hearts J": 10, "Hearts Q": 11, "Hearts K": 12, "Hearts A": 13,
+                          "Spades 2": 1, "Spades 3": 2, "Spades 4": 3, "Spades 5": 4, "Spades 6": 5, "Spades 7": 6,
+                          "Spades 8": 7, "Spades 9": 8, "Spades 10": 9, "Spades J": 10, "Spades Q": 11,
+                          "Spades K": 12,
+                          "Spades A": 13
+                          }
+    high_card_points = []
+    for outlier_card in checking_list: #referring to each individual card of the player's set
+        high_card_points.append(single_card_points[outlier_card])
+    return max(high_card_points)
+
+def royal_flush_check(): #Royal flush (AKQJ10 same suit)
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    royal_flush = 0
+    player_wins = []
+
+    for player in showdown_list:
+        royal_flush_check_digits = ["0", "J", "Q", "K", "A"]
+        check_suits = ["D", "C", "H", "S"]
+        list = []
+        for i in player:
+            if i[-1] in royal_flush_check_digits:
+                royal_flush_check_digits.remove(i[-1])
+                list.append(i)
+                if len(royal_flush_check_digits) == 0:
+                    for j in list:
+                        if j[0] in check_suits:
+                            check_suits.remove(j[0])
+                            if len(check_suits) == 3:
+                                royal_flush += 1
+                                player_wins.append(player) #don't forget player here refers to the set of cards associated with the player
+    lucky_guy = []
+    if royal_flush == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])]) #this returns the NAME of the player in a list
+        winner = True
+        reason = "ROYAL FLUSH"
+        return lucky_guy
+    elif royal_flush >= 2:
+        for player in player_wins:
+            lucky_guy.append(order_list[showdown_list.index(player)])
+        winner = True
+        reason = "ROYAL FLUSH"
+        return lucky_guy
+    else:
+        return royal_flush
+
+def straight_flush_check(): #Straight flush (five cards in a sequence, all in the same suit)
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    straight_flush = 0
+    utility_list = []
+    stalemate_list = []
+    player_wins = []
+    for player in showdown_list:
+        straight_check_digits = ["2", "3", "4", "5", "6", "7", "8", "9", "0", "J", "Q", "K", "A"]
+        check_suits = ["D", "C", "H", "S"]
+        list1 = []
+        checking_list = []
+        for i in player:
+            list1.append(straight_check_digits.index(i[-1]))
+        for j in list1:
+            list2 = []
+            if j + 1 in list1:
+                if j + 2 in list1:
+                    if j + 3 in list1:
+                        if j + 4 in list1:
+                            list2.append(straight_check_digits[j+4])
+                            list2.append(straight_check_digits[j+3])
+                            list2.append(straight_check_digits[j+2])
+                            list2.append(straight_check_digits[j+1])
+                            list2.append(straight_check_digits[j])
+            if len(list2) == 5:
+                for k in player:
+                    if straight_check_digits.index(k[-1]) in list2:
+                        checking_list.append(k)
+                for f in checking_list:
+                    if f[0] in check_suits:
+                        check_suits.remove(f[0])
+                        if len(check_suits) == 3:
+                            straight_flush += 1
+                            player_wins.append(player)
+                            for i in player:
+                                if i not in list2:
+                                    utility_list.append(i)
+                            stalemate_list.append(utility_list)
+    lucky_guy = []
+    if straight_flush == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])  # this returns the NAME of the player in a list
+        winner = True
+        reason = "STRAIGHT FLUSH"
+        return lucky_guy
+    elif straight_flush >= 2:
+        comparison_list = []
+        for i in stalemate_list:
+            comparison_list.append(high_card_outlier(i))
+        position = comparison_list.index(max(comparison_list))
+        lucky_guy.append(order_list[showdown_list.index(player_wins[position])])
+        winner = True
+        reason = "STRAIGHT FLUSH"
+        return lucky_guy
+    else:
+        return straight_flush
+
+def four_of_a_kind_check():
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    four_of_a_kind = 0
+    player_wins = []
+    utility_list = []
+    stalemate_list = []
+
+    for player in showdown_list:
+        list = []
+        for i in player:
+            list.append(i[-1])
+        m = mode(list)
+        j = list.count(m)
+        if j == 4:
+            four_of_a_kind += 1
+            player_wins.append(player)
+            for l in list:
+                if l != m:
+                    utility_list.append(player[list.index(l)])
+            stalemate_list.append(utility_list)
+    lucky_guy = []
+    if four_of_a_kind == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])
+        winner = True
+        reason = "FOUR OF A KIND"
+        return lucky_guy
+    elif four_of_a_kind >= 2:
+        comparison_list = []
+        for i in stalemate_list:
+            comparison_list.append(high_card_outlier(i))
+        position = comparison_list.index(max(comparison_list))
+        lucky_guy.append(order_list[showdown_list.index(player_wins[position])])
+        winner = True
+        reason = "FOUR OF A KIND"
+        return lucky_guy
+    else:
+        return four_of_a_kind
+
+def full_house_check(): #Full house (3 of a kind with a pair)
+    global showdown_list
+    global order_list
+    global winner
+    global reason
+    global lucky_guy
+
+    full_house = 0
+    player_wins = []
+
+     
+    for player in showdown_list:
+        list = []
+        for i in player:
+            list.append(i[-1])
+        l = mode(list)
+        j = list.count(l)
+        if j == 3:
+            count = 1
+            while count <= 3:
+                count += 1
+                list.remove(l)
+            g = mode(list)
+            k = list.count(g)
+            if k >= 2:
+                full_house += 1
+                player_wins.append(player)
+    lucky_guy = []
+    if full_house == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])
+        winner = True
+        reason = "FULL HOUSE"
+        return lucky_guy
+    elif full_house >= 2: #1a, 2b (2a, 0b vs 1a, 1b) \ 2a, 2b (1a, 0b vs 0a, 1b) \ 3a, 2b (0a, 0b vs 0a, 1b)
+        test_mode = []
+        list1 = []
+        index_list = []
+        for player in player_wins:
+            for i in player:
+                list1.append(i[-1])
+            if "0" in list1:
+                list1.remove("0")
+                list1.append("10")
+            elif "J" in list1:
+                list1.remove("J")
+                list1.append("11")
+            elif "Q" in list1:
+                list1.remove("Q")
+                list1.append("12")
+            elif "K" in list1:
+                list1.remove("K")
+                list1.append("13")
+            list1.sort(reverse = True)
+            test_mode.append(mode(list1))
+            for i in test_mode:
+                if i == test_mode[0]:
+                    index_list.append(test_mode.index(i))
+        for j in index_list:
+            lucky_guy.append(order_list[showdown_list.index(player_wins[j])])
+            winner = True
+            reason = "FULL HOUSE"
+            return lucky_guy
+    else:
+        return full_house
+
+def flush_check(): #Flush (5 cards same suit, but not in a sequence)
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global suit
+    global reason
+
+    flush = 0
+    player_wins = []
+    for player in showdown_list:
+        list = []
+        for i in player:
+            list.append(i[0])
+        suit = mode(list)
+        j = list.count(suit)
+        if j >= 5:
+            flush += 1
+            player_wins.append(player)
+    lucky_guy = []
+    if flush == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])
+        winner = True
+        reason = "FLUSH"
+        return lucky_guy
+    elif flush >= 2:
+        utility_list = []
+        for player in showdown_list:
+            list1 = []
+            for i in player:
+                if i[0] == suit:
+                    list1.append(i[-1])
+            utility_list.append(list1)
+        original_list = utility_list
+        utility_list.sort(reverse = True)
+        index_winner = original_list.index(utility_list[0])
+        lucky_guy.append(order_list[showdown_list.index(player_wins[index_winner])])
+        winner = True
+        reason = "FLUSH"
+        return lucky_guy
+    else:
+        return flush
+
+def straight_check(): #Straight (5 cards in a sequence, but not same suit),
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    straight = 0
+    player_wins = []
+    utility_list = []
+    stalemate_list = []
+
+    for player in showdown_list:
+        straight_check_digits = ["2", "3", "4", "5", "6", "7", "8", "9", "0", "J", "Q", "K", "A"]
+        list = []
+        for i in player:
+            list.append(straight_check_digits.index(i[-1]))
+        for j in list:
+            if j + 1 in list:
+                if j + 2 in list:
+                    if j + 3 in list:
+                        if j + 4 in list:
+                            straight += 1
+                            player_wins.append(player)
+                            utility_list.append(straight_check_digits[j+4])
+                            utility_list.append(straight_check_digits[j+3])
+                            utility_list.append(straight_check_digits[j+2])
+                            utility_list.append(straight_check_digits[j+1])
+                            utility_list.append(straight_check_digits[j])
+                            stalemate_list.append(utility_list)
+    lucky_guy = []
+    if straight == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])
+        winner = True
+        reason = "STRAIGHT"
+        return lucky_guy
+    elif straight >= 2:
+        stalemate_list.sort(reverse = True)
+        for j in stalemate_list:
+            if j == j[0]:
+                position = stalemate_list.index(j)
+                lucky_guy.append(order_list[showdown_list.index(player_wins[position])])
+            winner = True
+            reason = "STRAIGHT"
+            return lucky_guy
+    else:
+        return straight
+
+def three_of_a_kind_check():
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    three_of_a_kind = 0
+    player_wins = []
+    utility_list = []
+    stalemate_list = []
+
+    for player in showdown_list:
+        list = []
+        for i in player:
+            list.append(i[-1])
+        m = mode(list)
+        j = list.count(m)
+        if j == 3:
+            three_of_a_kind += 1
+            player_wins.append(player)
+            for k in list:
+                if k != m:
+                    utility_list.append(player[list.index(k)])
+            stalemate_list.append(utility_list)
+    lucky_guy = []
+    if three_of_a_kind == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])
+        winner = True
+        reason = "THREE OF A KIND"
+        return lucky_guy
+    elif three_of_a_kind >= 2:
+        comparison_list = []
+        for i in stalemate_list:
+            comparison_list.append(high_card_outlier(i))
+            comparison_list.sort(reverse = True)
+        position = []
+        for k in comparison_list:
+            if k == k[0]:
+                position.append(comparison_list.index(k))
+        for l in position:
+            lucky_guy.append(order_list[showdown_list.index(player_wins[l])])
+        winner = True
+        reason = "THREE OF A KIND"
+        return lucky_guy
+    else:
+        return three_of_a_kind
+
+def two_pair_check():
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    two_pair = 0
+
+    player_wins = []
+    stalemate_list = []
+    stalemate_list2 = []
+    utility_list = []
+    for player in showdown_list:
+        list = []
+        for i in player:
+            list.append(i[-1])
+        list.sort(reverse = True)
+        l = mode(list)
+        j = list.count(l)
+        if j == 2:
+            list = [s for s in list if s != l]
+            m = mode(list)
+            k = list.count(m)
+            if k == 2:
+                two_pair += 1
+                player_wins.append(player)
+                stalemate_list.append([l,m])
+                for k in list:
+                    if k != l and k != m:
+                        utility_list.append(k)
+                stalemate_list2.append(utility_list)
+    lucky_guy = []
+    if two_pair == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])
+        winner = True
+        reason = "TWO PAIR"
+        return lucky_guy
+    comparison_list = []
+    if two_pair >= 2:
+        original_list = stalemate_list
+        stalemate_list.sort(reverse = True)
+        for i in stalemate_list:
+            if i == stalemate_list[0]:
+                comparison_list.append(i)
+        if len(comparison_list) == 1:
+            position = original_list.index(comparison_list[0])
+            lucky_guy.append(order_list[showdown_list.index(player_wins[position])])
+            winner = True
+            reason = "TWO PAIR"
+            return lucky_guy
+        elif len(comparison_list) > 1:
+            original_list2 = stalemate_list2
+            stalemate_list2.sort(reverse = True)
+            position = original_list2.index(stalemate_list2[0])
+            lucky_guy.append(order_list[showdown_list.index(player_wins[position])])
+            winner = True
+            return lucky_guy
+    else:
+        return two_pair
+
+def pair_check():
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    pair = 0
+    player_wins = []
+    stalemate_list1 = []
+    stalemate_list2 = []
+    for player in showdown_list:
+        list = []
+        utility_list = []
+        for i in player:
+            list.append(i[-1])
+        m = mode(list)
+        j = list.count(m)
+        if j == 2:
+            pair += 1
+            stalemate_list1.append(m)
+            player_wins.append(player)
+            for k in list:
+                if k != m:
+                    utility_list.append(k)
+            stalemate_list2.append(utility_list)
+    lucky_guy = []
+    if pair == 1:
+        lucky_guy.append(order_list[showdown_list.index(player_wins[0])])
+        winner = True
+        reason = "PAIR"
+        return lucky_guy
+    comparison_list1 = []
+    checking_list = ["2", "3", "4", "5", "6", "7", "8", "9", "0", "J", "Q", "K", "A"]
+    count = 0
+    if pair >= 2:
+        for j in stalemate_list1: #last digit of the pairs
+            comparison_list1.append(checking_list.index(j)) #check how big is the last digit by using the index of an ordered list as the basis for comparison
+        for i in comparison_list1:
+            if i == max(comparison_list1): #i is still the index in checking_list
+                count += 1
+        if count == 1:
+            biggest_pair = checking_list[max(comparison_list1)] #number of biggest pair
+            position = stalemate_list1.index(biggest_pair) #index of winning set
+            lucky_guy.append(order_list[showdown_list.index(player_wins[position])])
+            winner = True
+            reason = "PAIR"
+            return lucky_guy
+        else:
+            for k in stalemate_list2: #last digit of non-pairs
+                for digit in k:
+                    k.insert(k.index(digit), checking_list.index(digit))
+                    k.remove(digit)
+            original_list = stalemate_list2
+            stalemate_list2.sort(reverse = True)
+            position = original_list.index(stalemate_list2[0])
+            lucky_guy.append(order_list[showdown_list.index(player_wins[position])])
+            winner = True
+            reason = "PAIR"
+            return lucky_guy
+    else:
+        return pair
+
+def high_card_check():
+    global showdown_list
+    global order_list
+    global winner
+    global lucky_guy
+    global reason
+
+    comparison_list = []
+    lucky_guy = []
+    for player in showdown_list:
+        list = []
+        for i in player:
+            list.append(i[-1])
+        list.sort(reverse = True)
+        comparison_list.append(list)
+    original_list = comparison_list
+    comparison_list.sort(reverse = True)
+    position = original_list.index(comparison_list[0])
+    lucky_guy.append(order_list[position])
+    winner = True
+    reason = "HIGH CARD"
+    return lucky_guy
+
+#CPUs should be more cautious as the pot gets bigger 
+def point_moderation(CPU_points):
+    global average_money
+    
+    if average_money > 400 and average_money <= 600:
+        if pot > 100 and pot <= 175:
+            CPU_points = 5 * (CPU_points // 6)
+        elif pot > 175 and pot <= 250:
+            CPU_points = 4 * (CPU_points // 5)
+        elif pot > 250 and pot <= 325:
+            CPU_points = 3 * (CPU_points // 4)
+        else:
+            CPU_points = 2 * (CPU_points // 3)
+
+    if average_money > 250 and average_money <= 400:
+        if pot > 75 and pot <= 125:
+            CPU_points = 5 * (CPU_points // 6)
+        elif pot > 125 and pot <= 175:
+            CPU_points = 4 * (CPU_points // 5)
+        elif pot > 175 and pot <= 225:
+            CPU_points = 3 * (CPU_points // 4)
+        else:
+            CPU_points = 2 * (CPU_points // 3)
+
+    else:
+        if pot > 50 and pot <= 80:
+            CPU_points = 5 * (CPU_points // 6)
+        elif pot > 80 and pot <= 110:
+            CPU_points = 4 * (CPU_points // 5)
+        elif pot > 110 and pot <= 140:
+            CPU_points = 3 * (CPU_points // 4)
+        else:
+            CPU_points = 2 * (CPU_points // 3)
+
+
+#There must be a degree of random_behavior in AI behavior to simulate the behavior of bluffing/deception. This function will be called whenever a particular decision-point is reached to decide action taken.
+def randomness():
+    global random_behavior
+    random_behavior = random.randint(1, 11)
+
+
+# compiled_side_pot_name_list contains the list of everyone at that point where the pot splits, compiled_side_pot_amount is the amount of pot shared among the players in each element in compiled_side_pot_name_list
+# everytime a pot splits, evaluate outcome with this function
+# this function is only activated when split_pot == True
+def split_pot_activated(name_list, pot_amount):
+    global compiled_side_pot_name_list
+    global compiled_side_pot_amount
+
+    compiled_side_pot_name_list.append(name_list)
+    compiled_side_pot_amount.append(pot_amount)
+
+    return [compiled_side_pot_name_list, compiled_side_pot_amount]
+#End-game logistics (announcement of who wins, distribution of pot, character quotes, etc.)
+def exit_game_prompt():
+    global exit_game
+    global all_lucky_guys
+    global list_CPU_chosen
+    global Ella_condition
+    global starting_cash_tabs
+
+    for player in list_CPU_chosen:
+        if starting_cash_tabs[player] == "ALL IN" or starting_cash_tabs[player] == 0:
+            print(player + " is out of the game!")
+            list_CPU_chosen.remove(player)
+
+    if player_name in all_lucky_guys:
+        if len(list_CPU_chosen) == 1:
+            print("Congratulations " + player_name + "! You have proven yourself to be the best poker player Jin Yang's Poker Club has ever seen.")
+            exit_game = True
+        else:
+            exit_prompt = input("Was that skill or luck? Enter 1 if you concede that it is luck, Enter anything else to prove your abilities once more: ")
+            if exit_prompt == "1":
+                exit_game = "Sad to see you go. Visit Jin Yang's Poker Club again soon!"
+                exit_game = True
+    else:
+        if starting_cash_tabs[player_name] == "ALL IN" or starting_cash_tabs[player_name] == 0:
+            print("Hmmm...how should I put it? Your performance certainly leaves more to be desired...")
+            exit_game = True
+        else:
+            exit_prompt = input("One loses so that they can win more. Enter 1 if you have had enough, Enter anything else if you want to show the CPUs who's boss: ")
+            if exit_prompt == "1":
+                exit_game = "Sorry to see you go. Visit Jin Yang's Poker Club again soon!"
+                exit_game = True
+
+    for player in list_CPU_chosen:
+        if starting_cash_tabs[player] == "ALL IN" or starting_cash_tabs[player] == 0:
+            del starting_cash_tabs[player]
+
+    if "Ella" not in all_lucky_guys:
+        Ella_condition = True
+
+#Running the game
+set_up()
+while exit_game == False:
+    game()
+    player_action()
+    if round_end == True:
+        exit_game_prompt()
+        round_end = False
+        continue
+    elif jump_to_showdown == True:
+        deal_flop()
+        deal_turn()
+        deal_river()
+        final_scoring()
+        exit_game_prompt()
+    else:
+        deal_flop()
+        post_flop = True
+        player_action()
+        if round_end == True:
+            exit_game_prompt()
+            round_end = False
+            continue
+        elif jump_to_showdown == True:
+            deal_turn()
+            deal_river()
+            final_scoring()
+            exit_game_prompt()
+        else:
+            deal_turn()
+            player_action()
+            if round_end == True:
+                exit_game_prompt()
+                round_end = False
+                continue
+            elif jump_to_showdown == True:
+                deal_river()
+                final_scoring()
+                exit_game_prompt()
+            else:
+                deal_river()
+                player_action()
+                if round_end == True:
+                    exit_game_prompt()
+                    round_end = False
+                    continue
+                else:
+                    final_scoring()
+                    exit_game_prompt()
